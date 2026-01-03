@@ -13,6 +13,8 @@ import torch
 import multiprocessing as mp
 import psutil
 from numpy.linalg import matrix_rank
+from pathlib import Path
+import os
 
 rng = default_rng()
 
@@ -23,8 +25,8 @@ rng = default_rng()
 # data_dir = './data' # Define a base directory relative to where you run your script
 data_dir = 'C:/Users/DillW/Documents/University of Calgary Documents/Calgary Postdoc/Code/Sensor Scheduling/pyqg_DA-main/pyqg_DA-main/data'
 
-read_data_dir = data_dir
-save_data_dir = data_dir
+# read_data_dir = data_dir
+# save_data_dir = data_dir
 
 model_para={'rek':3.5E-8,'delta':0.05,'beta':0.5E-11}
 
@@ -79,6 +81,16 @@ class DA_exp():
             self.DA_cycle=12*self.DA_freq
         if 'R_W' in kwargs:
             self.R_W=kwargs['R_W']
+        if 'exp_id' in kwargs:
+            self.exp_id = kwargs['exp_id']
+            # Define directories specific to experiment
+            self.save_dir = str(Path(data_dir) / self.exp_id)
+            Path(self.save_dir).mkdir(parents=True, exist_ok=True)
+            self.read_dir = str(Path(data_dir) / self.exp_id)
+        else:
+            self.read_dir = data_dir
+            self.save_dir = data_dir
+
 
     def ens_spinup(self,years=10,save_netcdf=True,overwrite=False):
         '''Spin up model ensemble'''
@@ -89,13 +101,13 @@ class DA_exp():
         ds_spinup=ens.run_for_steps(years*int(year_step), save_every=years*int(year_step))
         q_init=ds_spinup.q[:,-1,:,:,:]
         if save_netcdf:
-            file_name='{}/IC_q_Nx{}_ens{}.nc'.format(save_data_dir,self.Nx_truth,self.nens)
+            file_name='{}/IC_q_Nx{}_ens{}.nc'.format(self.save_dir,self.Nx_truth,self.nens)
             if not exists(file_name) or overwrite:
                 q_init.to_netcdf(file_name)
         return q_init
     
     def generate_truth(self,years,save_every=12,var_list=['q','u','v','Qy']):
-        q_init_file='{}/IC_q_Nx{}_ens{}.nc'.format(read_data_dir,self.Nx_truth,self.nens)
+        q_init_file='{}/IC_q_Nx{}_ens{}.nc'.format(self.read_dir,self.Nx_truth,self.nens)
         if exists(q_init_file):
             q_init=xr.open_dataarray(q_init_file)
         else:
@@ -105,7 +117,7 @@ class DA_exp():
             model.q=q_init[i,...].data
         ds_truth=ens.run_for_steps(years*int(year_step), save_every=save_every, var_list=var_list)
 
-        file_name='{}/Truth_Nx{}_{}years.nc'.format(save_data_dir,self.Nx_truth,years)
+        file_name='{}/Truth_Nx{}_{}years.nc'.format(self.save_dir,self.Nx_truth,years)
         if not exists(file_name):
             ds_truth.to_netcdf(file_name)
                 
@@ -114,7 +126,7 @@ class DA_exp():
     def obs_name(self,folder=''):
         '''file name for the synthetic observations'''
         obs_name='{}/{}/Obs_Nx{:d}_freq{}_nobs{:s}_err{:d}E{:d}_{:d}E{:d}.nc'.format(
-            read_data_dir,folder,self.Nx_truth,self.obs_freq,'_'.join(map(str,self.nobs)),
+            self.read_dir,folder,self.Nx_truth,self.obs_freq,'_'.join(map(str,self.nobs)),
             self.obs_err[0],self.obs_err[1],self.obs_err[2],self.obs_err[3])
         return obs_name
     
@@ -126,10 +138,10 @@ class DA_exp():
     def read_truth(self,years,interp=False,folder=''):
         # Check for the interpolated/low-resolution file first (Truth_NxDA_from_NxTruth)
         if interp:
-            truth_file='{}/{}/Truth_Nx{}_from_Nx{}_{}years.nc'.format(read_data_dir,folder,self.Nx_DA,self.Nx_truth,years)
+            truth_file='{}/{}/Truth_Nx{}_from_Nx{}_{}years.nc'.format(self.read_dir,folder,self.Nx_DA,self.Nx_truth,years)
         else:
             # If not requesting interpolated data, load the standard truth file (Truth_NxTruth)
-            truth_file='{}/{}/Truth_Nx{}_{}years.nc'.format(read_data_dir,folder,self.Nx_truth,years)
+            truth_file='{}/{}/Truth_Nx{}_{}years.nc'.format(self.read_dir,folder,self.Nx_truth,years)
     
         # This part remains the same
         truth_ds=xr.open_dataset(truth_file)
@@ -151,9 +163,9 @@ class DA_exp():
 
     def read_control(self,years):
         if self.Nx_DA==self.Nx_truth:
-            truth_file='{}/Truth_Nx{}_{}years.nc'.format(read_data_dir,self.Nx_DA,years)
+            truth_file='{}/Truth_Nx{}_{}years.nc'.format(self.read_dir,self.Nx_DA,years)
         else:
-            truth_file='{}/Truth_Nx{}_from_Nx{}_{}years.nc'.format(read_data_dir,self.Nx_DA,self.Nx_truth,years)
+            truth_file='{}/Truth_Nx{}_from_Nx{}_{}years.nc'.format(self.read_dir,self.Nx_DA,self.Nx_truth,years)
     
         truth_ds=xr.open_dataset(truth_file)
         truth_ds.attrs['truth_file']=truth_file
@@ -190,7 +202,7 @@ class DA_exp():
         
         if save_netcdf:
             q_low_ds.to_netcdf('{}/Truth_Nx{}_from_Nx{}_{}years.nc'.
-                            format(save_data_dir,self.Nx_DA,self.Nx_truth,years))
+                            format(self.save_dir,self.Nx_DA,self.Nx_truth,years))
         
         return q_low_ds
     
@@ -252,7 +264,7 @@ class DA_exp():
                                    'obs_freq':self.obs_freq})
         if save_netcdf:
             file_name='{:s}/Obs_Nx{:d}_freq{}_nobs{:s}_err{:d}E{:d}_{:d}E{:d}.nc'.format(
-                save_data_dir,self.Nx_truth,self.obs_freq,'_'.join(map(str,self.nobs)),
+                self.save_dir,self.Nx_truth,self.obs_freq,'_'.join(map(str,self.nobs)),
                 self.obs_err[0],self.obs_err[1],self.obs_err[2],self.obs_err[3])
             if not exists(file_name) or overwrite:
                 obs_ds.to_netcdf(file_name)
@@ -365,14 +377,14 @@ class DA_exp():
     def read_mean(self,folder=''):
         file_name=self.file_name()
         if folder=='training':
-            mean_file='{}/{}/EnsMean_{}.nc'.format(read_data_dir,folder,file_name)
+            mean_file='{}/{}/EnsMean_{}.nc'.format(self.read_dir,folder,file_name)
         elif folder!='':
             if self.DA_method=='UnetKF':
-                mean_file='{}/{}_Nx{}_{}_ens{}/EnsMean_{}.nc'.format(read_data_dir,self.DA_method,self.Nx_DA,self.Nx_truth,folder,file_name)
+                mean_file='{}/{}_Nx{}_{}_ens{}/EnsMean_{}.nc'.format(self.read_dir,self.DA_method,self.Nx_DA,self.Nx_truth,folder,file_name)
             else:
-                mean_file='{}/{}/EnsMean_{}.nc'.format(read_data_dir,self.DA_method,file_name)
+                mean_file='{}/{}/EnsMean_{}.nc'.format(self.read_dir,self.DA_method,file_name)
         else:
-            mean_file='{}/{}/EnsMean_{}.nc'.format(read_data_dir,self.DA_method,file_name)
+            mean_file='{}/{}/EnsMean_{}.nc'.format(self.read_dir,self.DA_method,file_name)
         print(mean_file)
         mean_ds=xr.open_dataset(mean_file)
         return mean_ds
@@ -382,11 +394,11 @@ class DA_exp():
             file_name=self.file_name()
             if folder!='':
                 if self.DA_method=='UnetKF':
-                    std_file='{}/{}_Nx{}_{}_ens{}/EnsStd_{}.nc'.format(read_data_dir,self.DA_method,self.Nx_DA,self.Nx_truth,folder,file_name)
+                    std_file='{}/{}_Nx{}_{}_ens{}/EnsStd_{}.nc'.format(self.read_dir,self.DA_method,self.Nx_DA,self.Nx_truth,folder,file_name)
                 else:
-                    std_file='{}/{}/EnsStd_{}.nc'.format(read_data_dir,self.DA_method,file_name)
+                    std_file='{}/{}/EnsStd_{}.nc'.format(self.read_dir,self.DA_method,file_name)
             else:
-                std_file='{}/{}/EnsStd_{}.nc'.format(read_data_dir,self.DA_method,file_name)
+                std_file='{}/{}/EnsStd_{}.nc'.format(self.read_dir,self.DA_method,file_name)
             std_ds=xr.open_dataset(std_file)
         else:
             error('no ensemble spread')
@@ -404,13 +416,13 @@ class DA_exp():
         print(self.obs_ds)
         
         if DA_start==0:
-            print('{}/IC_q_Nx{}_ens{}.nc'.format(read_data_dir,self.Nx_DA,ic_ens))
-            q_init=xr.open_dataarray('{}/IC_q_Nx{}_ens{}.nc'.format(read_data_dir,self.Nx_DA,ic_ens))
+            print('{}/IC_q_Nx{}_ens{}.nc'.format(self.read_dir,self.Nx_DA,ic_ens))
+            q_init=xr.open_dataarray('{}/IC_q_Nx{}_ens{}.nc'.format(self.read_dir,self.Nx_DA,ic_ens))
             for i,model in enumerate(self.ens.models):
                 model.q=q_init.isel(model=(i+ic_seed)%len(q_init.model)).data
         else:
-            print('{}/EnsMean_{}.nc'.format(read_data_dir,self.file_name()))
-            q_DA_ds=xr.open_dataset('{}/EnsMean_{}.nc'.format(read_data_dir,self.file_name()))
+            print('{}/EnsMean_{}.nc'.format(self.read_dir,self.file_name()))
+            q_DA_ds=xr.open_dataset('{}/EnsMean_{}.nc'.format(self.read_dir,self.file_name()))
             for i,model in enumerate(self.ens.models):
                 model.q=q_DA_ds.q.isel(time=DA_start).data+rng.standard_normal((model.q.shape))*1e-10
                 
@@ -439,9 +451,16 @@ class DA_exp():
                 posterior=ens_inflate(prior_data,posterior,2,self.inflate[1])
             
             if self.save_B:
+                # print(f"Day {day}:")
+                # print(f"  Prior ensemble std layer 0: {prior_data[:,:prior_data.shape[1]//2].std():.2e}")
+                # print(f"  Prior ensemble std layer 1: {prior_data[:,prior_data.shape[1]//2:].std():.2e}")
+                # print(f"  B_ens diagonal (0,0) center: {B_ens[0,0]:.2e}")
+                # print(f"  B_ens cross (0, Nxy) : {B_ens[0, prior_data.shape[1]//2]:.2e}")
+                # print(f"  B_ens max: {np.max(np.abs(B_ens)):.2e}")
+                # print(f"  B_ens (0,1) block max: {np.max(np.abs(B_ens[:prior_data.shape[1]//2, prior_data.shape[1]//2:])):.2e}")
                 B_mat=Localize_B(B_ens,self.Nx_DA,Nlev,self.B_loc)
-                Path('{}/{}'.format(save_data_dir,self.file_name())).mkdir(exist_ok=True)
-                B_filename='{}/{}/B_ens_day{:04d}.nc'.format(save_data_dir,self.file_name(),day)
+                Path('{}/{}'.format(self.save_dir,self.file_name())).mkdir(exist_ok=True)
+                B_filename='{}/{}/B_ens_day{:04d}.nc'.format(self.save_dir,self.file_name(),day)
                 B_ens_da=xr.DataArray(B_mat,coords=[forecast_ds.lev,forecast_ds.y,forecast_ds.x,forecast_ds.lev,
                                                     np.arange(-self.B_loc,self.B_loc+1),np.arange(-self.B_loc,self.B_loc+1)],
                                       dims=['lev','y','x','lev_d','y_d','x_d'])
@@ -467,8 +486,8 @@ class DA_exp():
             
             if self.save_B:
                 B_mat=Localize_B(B_ens,self.Nx_DA,Nlev,self.B_loc)
-                Path('{}/{}'.format(save_data_dir,self.file_name())).mkdir(exist_ok=True)
-                B_filename='{}/{}/B_ens_day{:04d}.nc'.format(save_data_dir,self.file_name(),day)
+                Path('{}/{}'.format(self.save_dir,self.file_name())).mkdir(exist_ok=True)
+                B_filename='{}/{}/B_ens_day{:04d}.nc'.format(self.save_dir,self.file_name(),day)
                 B_ens_da=xr.DataArray(B_mat,coords=[forecast_ds.lev,forecast_ds.y,forecast_ds.x,forecast_ds.lev,
                                                     np.arange(-self.B_loc,self.B_loc+1),np.arange(-self.B_loc,self.B_loc+1)],
                                       dims=['lev','y','x','lev_d','y_d','x_d'])
@@ -562,8 +581,8 @@ class DA_exp():
                 posterior=ens_inflate(prior_data,posterior,2,self.inflate[1])
                 
             if self.save_B:
-                Path('{}/{}'.format(save_data_dir,self.file_name())).mkdir(exist_ok=True)
-                B_filename='{}/{}/B_ens_day{:04d}.nc'.format(save_data_dir,self.file_name(),day)
+                Path('{}/{}'.format(self.save_dir,self.file_name())).mkdir(exist_ok=True)
+                B_filename='{}/{}/B_ens_day{:04d}.nc'.format(self.save_dir,self.file_name(),day)
                 B_pred_da=xr.DataArray(B_stacked.reshape(B_data.shape),
                                        coords=[forecast_ds.y,forecast_ds.x,np.array([0,1,2]),
                                                np.arange(-self.R_DA,self.R_DA+1),np.arange(-self.R_DA,self.R_DA+1)],
@@ -576,13 +595,23 @@ class DA_exp():
         posterior=posterior.reshape(prior.shape)
         return posterior
 
-    def run_exp(self,DA_days=365,DA_start=0,ic_seed=0,**kwargs):
-        self.init_DA(DA_start,ic_seed=ic_seed)
+    def run_exp(self,DA_days=365,DA_start=0,ic_seed=0, ic_ens = 100,**kwargs):
+        self.init_DA(DA_start,ic_seed=ic_seed, ic_ens = ic_ens)
         
         if self.DA_method in ['3DVar','En3DVar','3DEnVar','UnetKF','EnKF']:
-            B_filename='{}/B_d{}_Nx{}_500years.nc'.format(read_data_dir,self.delta_days,self.Nx_DA)
-            W_filename='{}/W_Nx{}_L{}.nc'.format(read_data_dir,self.Nx_DA,self.R_W)
+            B_filename='{}/B_d{}_Nx{}_500years.nc'.format(data_dir,self.delta_days,self.Nx_DA)
+            if not os.path.exists(B_filename):
+                print(f"--- B matrix not found. Generating now... ---")
+                self.B_calculation_3DVar(Nx=self.Nx_DA,years=500,delta_days=self.delta_days,save_netcdf=True,coeff=1)
+            W_filename='{}/W_Nx{}_L{}.nc'.format(data_dir,self.Nx_DA,self.R_W)
+            if not os.path.exists(W_filename):
+                print(f"--- W matrix not found. Generating now... ---")
+                self.Localize_weights(Nx=self.Nx_DA,R=1.0E5,save_netcdf=True)
+
             self.B_loc=max(int(np.ceil(2*self.R_W*1000/(self.ens.models[0].L/self.ens.models[0].nx))),8)
+            # print(f"B_loc calculated: {self.B_loc}")
+            # print(f"R_W: {self.R_W} km")
+            # print(f"Grid spacing: {self.ens.models[0].L/self.ens.models[0].nx} m")
             self.B_ds=xr.open_dataset(B_filename)
             self.W_ds=xr.open_dataset(W_filename)
         if self.DA_method=='3DEnVar':
@@ -624,12 +653,12 @@ class DA_exp():
                         
         file_name=self.file_name()
         if ic_seed>0:
-            mean_file='{}/{}/EnsMean_{}_{}.nc'.format(save_data_dir,output_str,file_name,ic_seed)
+            mean_file='{}/{}/EnsMean_{}_{}.nc'.format(self.save_dir,output_str,file_name,ic_seed)
         else:
-            mean_file='{}/{}/EnsMean_{}.nc'.format(save_data_dir,output_str,file_name)
+            mean_file='{}/{}/EnsMean_{}.nc'.format(self.save_dir,output_str,file_name)
         ds_mean.to_netcdf(mean_file,mode='w')
         if self.nens>1:  
-            std_file='{}/{}/EnsStd_{}.nc'.format(save_data_dir,output_str,file_name)    
+            std_file='{}/{}/EnsStd_{}.nc'.format(self.save_dir,output_str,file_name)    
             ds_std.to_netcdf(std_file,mode='w')
     
 # Simple helper for running ensembles pyqg models for a specified number of steps & saving results
@@ -670,7 +699,7 @@ class Ensemble():
 
 # Calculate background covariance matrix for 3DVar
 def B_calculation_3DVar(Nx=64,years=100,delta_days=20,save_netcdf=True,coeff=1):
-    truth_file='{}/Truth_Nx{}_{}years.nc'.format(read_data_dir,Nx,years)
+    truth_file='{}/Truth_Nx{}_{}years.nc'.format(self.read_dir,Nx,years)
     try:
         ds_truth=xr.open_dataset(truth_file)
     except:
@@ -698,7 +727,7 @@ def B_calculation_3DVar(Nx=64,years=100,delta_days=20,save_netcdf=True,coeff=1):
                     attrs={'truth_file':truth_file})
 
     if save_netcdf:
-        file_name='{}/B_d{}_Nx{}_{}years.nc'.format(save_data_dir,delta_days,Nx,years)
+        file_name='{}/B_d{}_Nx{}_{}years.nc'.format(self.save_dir,delta_days,Nx,years)
         if not exists(file_name):
             ds.to_netcdf(file_name)
             
@@ -739,8 +768,17 @@ def Localize_B(B,Nx:int,Nlev:int,R:int):
             range_xy_l1=center_l*Nxy+range_y_2*Nx+range_x_2
             range_xy_l2=(1-center_l)*Nxy+range_y_2*Nx+range_x_2
 
-            B_mat[center_l,center_y,center_x,center_l,j+R,i+R]=B[center,range_xy_l1]
-            B_mat[center_l,center_y,center_x,1-center_l,j+R,i+R]=B[center,range_xy_l2]
+            # B_mat[center_l,center_y,center_x,center_l,j+R,i+R]=B[center,range_xy_l1]
+            # B_mat[center_l,center_y,center_x,1-center_l,j+R,i+R]=B[center,range_xy_l2]
+
+            for c in range(Nxyl):
+                cl = center_l[c]
+                cy = center_y[c]
+                cx = center_x[c]
+                
+                # Assign values using scalar indices
+                B_mat[cl, cy, cx, cl, j + R, i + R] = B[c, range_xy_l1[c]]
+                B_mat[cl, cy, cx, 1 - cl, j + R, i + R] = B[c, range_xy_l2[c]]
     
     return B_mat
 
@@ -766,10 +804,25 @@ def globalize_B(B,Nx:int,Nlev:int,R:int):
             range_xy_l1=range_y_2*Nx+range_x_2
             range_xy_l2=Nxy+range_y_2*Nx+range_x_2
 
-            B_mat[center,range_xy_l1]=B[center_y,center_x,0,j+R,i+R]
-            B_mat[center,range_xy_l2]=B[center_y,center_x,1,j+R,i+R]
-            B_mat[range_xy_l2,center]=B[center_y,center_x,1,j+R,i+R]
-            B_mat[center+Nxy,range_xy_l1+Nxy]=B[center_y,center_x,2,j+R,i+R]
+            # B_mat[center,range_xy_l1]=B[center_y,center_x,0,j+R,i+R]
+            # B_mat[center,range_xy_l2]=B[center_y,center_x,1,j+R,i+R]
+            # B_mat[range_xy_l2,center]=B[center_y,center_x,1,j+R,i+R]
+            # B_mat[center+Nxy,range_xy_l1+Nxy]=B[center_y,center_x,2,j+R,i+R]
+
+            for c in range(Nxy):
+                val_0 = B[center_y[c], center_x[c], 0, j + R, i + R]
+                val_1 = B[center_y[c], center_x[c], 1, j + R, i + R]
+                val_2 = B[center_y[c], center_x[c], 2, j + R, i + R]
+                
+                # Assign to the global B matrix
+                idx_c = center_indices[c]
+                idx_l1 = range_xy_l1[c]
+                idx_l2 = range_xy_l2[c]
+                
+                B_mat[idx_c, idx_l1] = val_0
+                B_mat[idx_c, idx_l2] = val_1
+                B_mat[idx_l2, idx_c] = val_1
+                B_mat[idx_c + Nxy, idx_l1 + Nxy] = val_2
     
     return B_mat
 
@@ -942,7 +995,7 @@ def Localize_weights(Nx=64,R=1.0E5,save_netcdf=True):
                     attrs={'L':L,
                            'R':R})
     if save_netcdf:
-        W_ds.to_netcdf('{}/W_Nx{}_L{:d}.nc'.format(save_data_dir,Nx,int(R/1000)))
+        W_ds.to_netcdf('{}/W_Nx{}_L{:d}.nc'.format(self.save_dir,Nx,int(R/1000)))
 
     return W_ds
 
