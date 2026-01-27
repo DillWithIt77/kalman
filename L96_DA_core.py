@@ -89,13 +89,11 @@ class L96_DA_exp:
         self.F = kwargs.get('F', 8.0)
         self.dt = kwargs.get('dt', 0.01)
         
-        if self.DA_method in ['EnKF']:
+        if self.DA_method in ['EnKF', 'ETKF','EAKF']:
             self.delta_steps = kwargs.get('delta_steps', 100)
-        
-        if self.DA_method == 'EnKF':
             self.inflate = kwargs.get('inflate', [1.0, 0.0])
             self.save_B = kwargs.get('save_B', False)
-        
+            
         if self.DA_method == 'UnetKF':
             self.inflate = kwargs.get('inflate', [1.0, 0.0])
             self.save_B = kwargs.get('save_B', False)
@@ -258,7 +256,7 @@ class L96_DA_exp:
                 model.x = x_init[(i + ic_seed) % len(x_init)].values
         
         # Setup localization if needed
-        if self.DA_method in ['EnKF', 'UnetKF'] and self.use_localization:
+        if self.DA_method in ['EnKF', 'EATK', 'ETKF','UnetKF'] and self.use_localization:
             self.W = self.compute_localization()
         
         return self.ens
@@ -293,7 +291,7 @@ class L96_DA_exp:
         H, R_obs = self.create_obs_operator(obs_cycle_idx)
         obs_x = self.obs_ds.x[obs_cycle_idx].values
         
-        if self.DA_method == 'EnKF':
+        if self.DA_method in ['EnKF','EAKF', 'ETKF']:
             # Ensemble Kalman Filter
             if self.inflate[0] > 1.0001:
                 prior = ens_inflate(prior, prior, 1, self.inflate[0])
@@ -311,11 +309,22 @@ class L96_DA_exp:
             # Apply localization only if use_localization is True
             if self.use_localization and hasattr(self, 'W'):
                 B_ens_loc = B_ens * self.W
-                # print(f"Cycle {obs_cycle_idx}: B_ens rank = {matrix_rank(B_ens)}, B_ens_loc rank = {matrix_rank(B_ens_loc)}")
-                posterior = EnKF(prior, obs_x, H, R_obs, B_ens_loc)
+                if self.DA_method == 'ETKF':
+                    posterior = ETKF(prior, obs_x, H, R_obs, B_ens_loc)
+                    
+                elif self.DA_method == 'EAKF':
+                    posterior = EAKF(prior, obs_x, H, R_obs, B_ens_loc)
+
+                else:
+                    posterior = EnKF(prior, obs_x, H, R_obs, B_ens_loc)
+
             else:
-                # print(f"Cycle {obs_cycle_idx}: B_ens rank = {matrix_rank(B_ens)} (no localization)")
-                posterior = EnKF(prior, obs_x, H, R_obs, B_ens)
+                if self.DA_method == 'ETKF':
+                    posterior = ETKF(prior, obs_x, H, R_obs, B_ens)
+                elif self.DA_method == 'EAKF':
+                    posterior = EAKF(prior, obs_x, H, R_obs, B_ens)
+                else:
+                    posterior = EnKF(prior, obs_x, H, R_obs, B_ens)
             
             if self.inflate[1] > 0.0001:
                 posterior = ens_inflate(prior, posterior, 2, self.inflate[1])
@@ -485,8 +494,8 @@ class L96_DA_exp:
         """Generate experiment filename"""
         if self.DA_method == 'NoDA':
             return f'Control_N{self.N_DA}'
-        elif self.DA_method == 'EnKF':
-            return f'EnKF_N{self.N_DA}_ens{self.nens}_freq{self.DA_freq}_relax{self.inflate[1]:.2f}_loc{self.loc_radius:.1f}_nobs{self.nobs}_err{self.obs_err:.1e}'
+        elif self.DA_method in ['EnKF', 'ETKF','EAKF']:
+            return f'{self.DA_method}_N{self.N_DA}_ens{self.nens}_freq{self.DA_freq}_relax{self.inflate[1]:.2f}_loc{self.loc_radius:.1f}_nobs{self.nobs}_err{self.obs_err:.1e}'
         elif self.DA_method == 'UnetKF':
             return f'UnetKF_N{self.N_DA}_ens{self.nens}_freq{self.DA_freq}_relax{self.inflate[1]:.2f}_loc{self.loc_radius:.1f}_nobs{self.nobs}_err{self.obs_err:.1e}'
         else:
@@ -683,6 +692,96 @@ def EnKF_mean(prior, obs, H, R, B):
     
     return posterior
 
+#######################################
+# Other Kalman Filters
+#######################################
+@jit(nopython=True)
+def EAKF(prior, obs, H, R, B = None):
+    nens, N = prior.shape
+    nobs = obs.shape[0]
+
+    Xf_mean = np.zeros(N)
+
+    for i in range(nens):
+        Xf_mean += prior[i,:]
+    Xf_mean /= nens
+
+    Xf = prior - Xf_mean #might inflate here if didn't have a sperate inflation funtion that is applied prior to calling the fileter functions
+
+    Yf = Xf@H.T
+    Yf_mean = np.zeros(nobs)
+    for i in range(nens):
+        for j in range(nobs):
+            Yf_mean[j] += Yf[i, j]
+    Yf_mean /= nens
+    Yf_ano = Yf-Yf_mean
+
+    Xf_mean_a = Xf_mean.copy()
+    Xf_a = Xf.copy()
+
+    for j in range(nobs):
+        y_f = Yf[:,j]
+        y_f_mean = Yf_mean[j]
+        y_f_ano = y_f-y_f_mean
+
+        y_f_ano = np.zeros(nens)
+        var_y_f = 0.0
+        for i in range(nens):
+            y_f_ano[i] = y_f[i] - y_f_mean
+            var_y_f += y_f_ano[i]**2
+        var_y_f /= (nens - 1.0)
+
+        if var_y_f < 1e-12:
+            continue
+
+        Rj = R[j,j]
+        cov_xy = (Xf_a.T@y_f_ano)/(nens-1)
+        K_gain = cov_xy/(var_y_f+Rj)
+        innovation = obs[j]- y_f_mean
+        Xf_mean_a += K_gain*innovation
+        alpha = np.sqrt(1- var_y_f/(var_y_f+Rj))
+
+        Xf_a = Xf_a = (1-alpha)*np.outer(y_f_ano,K_gain)/var_y_f
+        for k in range(N):
+            col_sum = 0.0
+            for i in range(nens):
+                col_sum += Xf_a[i, k]
+            col_mean = col_sum / nens
+            for i in range(nens):
+                Xf_a[i, k] -= col_mean
+
+    posterior = Xf_mean_a + Xf_a
+
+    return posterior
+@jit(nopython=True)
+def ETKF(prior, obs, H, R, B = None):
+    nens, N = prior.shape
+
+    Xf_mean = np.zeros(N)
+    for i in range(nens):
+        for k in range(N):
+            Xf_mean[k] += prior[i, k]
+    Xf_mean /= nens
+    
+    Xf = prior - Xf_mean
+    Yf = Xf@H.T
+    Yf_mean = H@Xf_mean
+
+    R_inv = np.linalg.inv(R)
+    C = (Yf@R_inv@Yf.T)/(nens-1)
+
+    eigenvals,eigenvecs = np.linalg.eigh(np.eye(nens)+C)
+    T = eigenvecs@np.diag(1/np.sqrt(eigenvals))@eigenvecs.T
+    innovation = obs - Yf_mean
+    W = np.linalg.solve(np.eye(nens)+C, Yf@R_inv@innovation)/(nens-1)
+    Xa_mean = Xf_mean+Xf.T@W
+    Xa = T@Xf
+
+    posterior = Xa_mean + Xa
+
+    return posterior
+
+
 @jit(nopython=True)
 def ens_inflate(prior, posterior, opt, factor):
     """Ensemble inflation - Numba Compatible"""
@@ -713,7 +812,7 @@ def ens_inflate(prior, posterior, opt, factor):
     
     return inflated
 # def ens_inflate(prior, posterior, opt, factor):
-#     """Ensemble inflation"""
+#     """Ensemble inflation""" #from github for paper
 #     nens, N = prior.shape
 #     inflated = np.zeros(prior.shape)
     
@@ -726,7 +825,7 @@ def ens_inflate(prior, posterior, opt, factor):
 #         inflated = mean_post + (1 - factor) * (posterior - mean_post) + \
 #                    factor * (prior - mean_prior)
     
-#     return inflated
+    return inflated
 
 def gaspari_cohn(distance, radius):
     """Gaspari-Cohn localization function"""

@@ -125,11 +125,12 @@ for i in range(len(exp_name)):
 
 	def update(frame):
 		im.set_array(B_ens[frame])
-		ax.set_title(f"B_ens Matrix - Cycle {frame + spin_up}") # Adjust title to show actual cycle index
+		ax.set_title(f"B_ens Matrix - Cycle {frame}") # Adjust title to show actual cycle index
 
 		return [im]
 
 	ani = FuncAnimation(fig, update, frames=num_cycles,interval=150, blit=True)
+	ani.save(f"./{base_dir}/{exp_name[i]}/B_ens_Matrix_ w{widths[i]}.gif", writer='pillow', fps=10)
 
 	plt.show()
 
@@ -200,13 +201,17 @@ for i in range(len(exp_name)):
 	plt.colorbar(im3, ax=ax3)
 
 	def update(frame):
-		pred = history_preds[frame][0]
-		res = truth_to_plot- pred
+		current_truth = B_valid[frame].cpu().numpy()
+		current_pred = history_preds[frame][0] # Taking first sample of the batch
 
-		im2.set_array(pred)
-		im3.set_array(res)
+		im1.set_array(current_truth)
+		im2.set_array(current_pred)
+		im3.set_array(current_truth - current_pred) # Update residual based on current truth
+
+		ax1.set_title(f"Truth (Cycle {frame})")
 		ax2.set_title(f"UNet Pred (Epoch {epochs[frame]})")
-		return [im2, im3]
+
+		return [im1, im2, im3]
 
 	ani = FuncAnimation(fig, update, frames=len(history_preds), interval=250, blit=True)
 	plt.tight_layout()

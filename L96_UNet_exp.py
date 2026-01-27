@@ -99,28 +99,48 @@ DA_exp_L20_w4 = {
     'F': 8.0,               # Lorenz 96 forcing
     'dt': 0.01}             # Time step
 
-# Experiment with 80 ensemble members
-DA_exp_L80 = {
+DA_exp_L20_EAKF = {
     'N_truth': 40,
     'N_DA': 40,
-    'nens': 80,
-    'DA_method': 'EnKF',
-    'obs_freq': 4,
-    'obs_err': 1.0,
-    'nobs': 20,
-    'loc_radius': 5.0,
-    'DA_freq': 4,
-    'save_B': True,
-    'use_localization': False,  # Use FULL B matrix
-    'inflate': [1.0, 0.5],
-    'F': 8.0,
-    'dt': 0.01}
+    'nens': 20,
+    'DA_method': 'EAKF',
+    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_err': 1.0,         # Observation error std
+    'nobs': 20,             # Number of observations per cycle
+    'loc_radius': 5.0,      # Localization radius
+    'DA_freq': 4,           # DA cycle frequency
+    'save_B': True,         # Save B matrices for training
+    'use_localization': False,  # Use FULL B matrix (no localization)
+    'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
+    'F': 8.0,               # Lorenz 96 forcing
+    'dt': 0.01}             # Time step
+
+DA_exp_L20_ETKF = {
+    'N_truth': 40,
+    'N_DA': 40,
+    'nens': 20,
+    'DA_method': 'ETKF',
+    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_err': 1.0,         # Observation error std
+    'nobs': 20,             # Number of observations per cycle
+    'loc_radius': 5.0,      # Localization radius
+    'DA_freq': 4,           # DA cycle frequency
+    'save_B': True,         # Save B matrices for training
+    'use_localization': False,  # Use FULL B matrix (no localization)
+    'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
+    'F': 8.0,               # Lorenz 96 forcing
+    'dt': 0.01}             # Time step
 
 # Select experiments to run
-experiments = [DA_exp_L20,DA_exp_L20_w16,DA_exp_L20_w4]
-STEPS_TRAIN = [1000,1000, 1000]  # Number of time steps for training
-exp_name = ['L20','L20_w16', 'L20_w4']
-widths = [40,16, 4]
+# experiments = [DA_exp_L20,DA_exp_L20_w16,DA_exp_L20_w4]
+# STEPS_TRAIN = [1000,1000, 1000]  # Number of time steps for training
+# exp_name = ['L20','L20_w16', 'L20_w4']
+# widths = [40,16, 4]
+
+experiments = [DA_exp_L20_ETKF]
+STEPS_TRAIN = [1000]
+exp_name = ['L20_ETKF']
+widths = [4]
 
 if __name__ == '__main__':
 
@@ -133,7 +153,7 @@ if __name__ == '__main__':
         DA_train = L96.L96_DA_exp(exp_id=exp_name[i], **experiments[i])
         
         # Construct expected filenames
-        mean_folder = (f'EnsMean_EnKF_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
+        mean_folder = (f'EnsMean_{experiments[i]["DA_method"]}_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
                       f'freq{experiments[i]["DA_freq"]}_relax{experiments[i]["inflate"][1]:.2f}_'
                       f'loc{experiments[i]["loc_radius"]:.1f}_nobs{experiments[i]["nobs"]}_'
                       f'err{experiments[i]["obs_err"]:.1e}')
@@ -142,7 +162,7 @@ if __name__ == '__main__':
         # Phase 1: Generate Training Data via EnKF
         if not os.path.exists(mean_file_path):
             print()
-            print('>>>>Phase 1: Generate Training Data via EnKF')
+            print('>>>>Phase 1: Generate Training Data via Kalman Filter')
             
             # Generate truth trajectory
             DA_train.generate_truth(steps=2000, save_every=1)
@@ -166,7 +186,7 @@ if __name__ == '__main__':
         print('>>>>Phase 2: Preprocess Data to Train UNet')
         
         # Construct B matrix folder name
-        b_folder = (f'EnKF_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
+        b_folder = (f'{experiments[i]["DA_method"]}_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
                    f'freq{experiments[i]["DA_freq"]}_relax{experiments[i]["inflate"][1]:.2f}_'
                    f'loc{experiments[i]["loc_radius"]:.1f}_nobs{experiments[i]["nobs"]}_'
                    f'err{experiments[i]["obs_err"]:.1e}')
