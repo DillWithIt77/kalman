@@ -56,7 +56,7 @@ DA_exp_L20 = {
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EnKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -72,7 +72,7 @@ DA_exp_L20_w16 = {
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EnKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -88,7 +88,7 @@ DA_exp_L20_w4 = {
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EnKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -104,7 +104,7 @@ DA_exp_L20_EAKF = {
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EAKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -120,7 +120,7 @@ DA_exp_L20_ETKF = {
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'ETKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -137,10 +137,10 @@ DA_exp_L20_ETKF = {
 # exp_name = ['L20','L20_w16', 'L20_w4']
 # widths = [40,16, 4]
 
-experiments = [DA_exp_L20_ETKF]
-STEPS_TRAIN = [1000]
-exp_name = ['L20_ETKF']
-widths = [4]
+experiments = [DA_exp_L20, DA_exp_L20_w16, DA_exp_L20_w4, DA_exp_L20_EAKF,DA_exp_L20_ETKF]
+STEPS_TRAIN = [100000, 100000, 100000, 100000, 100000]
+exp_name = ['L20','L20_w16','L20_w4','L20_EAKF','L20_ETKF']
+widths = [40,16,4,4,4]
 
 if __name__ == '__main__':
 
@@ -165,15 +165,15 @@ if __name__ == '__main__':
             print('>>>>Phase 1: Generate Training Data via Kalman Filter')
             
             # Generate truth trajectory
-            DA_train.generate_truth(steps=2000, save_every=1)
+            DA_train.generate_truth(steps=200000, save_every=1)
             # DA_train.plot_truth(cut=500, steps = 2000)
             # break;
             
             # Generate observations
-            DA_train.generate_obs(steps=2000, save_netcdf=True)
+            DA_train.generate_obs(steps=200000, save_netcdf=True)
             
             # Spin up ensemble
-            DA_train.ens_spinup(steps=100, save_netcdf=True)
+            DA_train.ens_spinup(steps=10000, save_netcdf=True)
             
             # Run EnKF experiment with save_B=True to collect B matrices
             DA_train.run_exp(DA_steps=STEPS_TRAIN[i], DA_start=0, ic_seed=0)

@@ -10,12 +10,13 @@ import torch.nn as nn
 import L96_DA_core as L96
 
 ##Experiments
+# Experiment with 20 ensemble members
 DA_exp_L20 = {
     'N_truth': 40,
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EnKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -31,7 +32,7 @@ DA_exp_L20_w16 = {
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EnKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -47,7 +48,39 @@ DA_exp_L20_w4 = {
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EnKF',
-    'obs_freq': 4,          # Observe every 4 time steps
+    'obs_freq': 2,          # Observe every 4 time steps
+    'obs_err': 1.0,         # Observation error std
+    'nobs': 20,             # Number of observations per cycle
+    'loc_radius': 5.0,      # Localization radius
+    'DA_freq': 4,           # DA cycle frequency
+    'save_B': True,         # Save B matrices for training
+    'use_localization': False,  # Use FULL B matrix (no localization)
+    'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
+    'F': 8.0,               # Lorenz 96 forcing
+    'dt': 0.01}             # Time step
+
+DA_exp_L20_EAKF = {
+    'N_truth': 40,
+    'N_DA': 40,
+    'nens': 20,
+    'DA_method': 'EAKF',
+    'obs_freq': 2,          # Observe every 4 time steps
+    'obs_err': 1.0,         # Observation error std
+    'nobs': 20,             # Number of observations per cycle
+    'loc_radius': 5.0,      # Localization radius
+    'DA_freq': 4,           # DA cycle frequency
+    'save_B': True,         # Save B matrices for training
+    'use_localization': False,  # Use FULL B matrix (no localization)
+    'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
+    'F': 8.0,               # Lorenz 96 forcing
+    'dt': 0.01}             # Time step
+
+DA_exp_L20_ETKF = {
+    'N_truth': 40,
+    'N_DA': 40,
+    'nens': 20,
+    'DA_method': 'ETKF',
+    'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
@@ -60,9 +93,9 @@ DA_exp_L20_w4 = {
 
 # Load CSV
 base_dir = './data/lorenz96'
-experiments = [DA_exp_L20, DA_exp_L20_w16,DA_exp_L20_w4]
-exp_name = ['L20', 'L20_w16','L20_w4']
-widths = [40,16,4]
+experiments = [DA_exp_L20, DA_exp_L20_w16,DA_exp_L20_w4,DA_exp_L20_EAKF,DA_exp_L20_ETKF]
+exp_name = ['L20', 'L20_w16','L20_w4','L20_EAKF','L20_ETKF']
+widths = [40,16,4,4,4]
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 for i in range(len(exp_name)):
@@ -83,17 +116,19 @@ for i in range(len(exp_name)):
 	plt.grid(True)
 
 	plt.tight_layout()
+	plt.savefig(f'./{base_dir}/{exp_name[i]}/losses_plt.png')
 	plt.show()
 
-	###covariance of EnKF
-	# DA_train = L96.L96_DA_exp(exp_id=exp_name[i], **experiments[i])
+	###covariance of Kalman Filter
 	# Construct expected filenames
-	mean_folder = (f'EnsMean_EnKF_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
+	print('importing mean file')
+	mean_folder = (f'EnsMean_{experiments[i]["DA_method"]}_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
 		f'freq{experiments[i]["DA_freq"]}_relax{experiments[i]["inflate"][1]:.2f}_'
 		f'loc{experiments[i]["loc_radius"]:.1f}_nobs{experiments[i]["nobs"]}_'
 		f'err{experiments[i]["obs_err"]:.1e}')
 
-	b_folder = (f'EnKF_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
+	print('importing covariance files')
+	b_folder = (f'{experiments[i]["DA_method"]}_N{experiments[i]["N_DA"]}_ens{experiments[i]["nens"]}_'
 		f'freq{experiments[i]["DA_freq"]}_relax{experiments[i]["inflate"][1]:.2f}_'
 		f'loc{experiments[i]["loc_radius"]:.1f}_nobs{experiments[i]["nobs"]}_'
 		f'err{experiments[i]["obs_err"]:.1e}')
@@ -129,6 +164,7 @@ for i in range(len(exp_name)):
 
 		return [im]
 
+	print('making animation')
 	ani = FuncAnimation(fig, update, frames=num_cycles,interval=150, blit=True)
 	ani.save(f"./{base_dir}/{exp_name[i]}/B_ens_Matrix_ w{widths[i]}.gif", writer='pillow', fps=10)
 
