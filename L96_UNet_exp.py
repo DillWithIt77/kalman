@@ -1,29 +1,6 @@
 """
 Lorenz 96 UNetKF Training and Experiment Script
 
-This script implements the UNet Kalman Filter approach from Lu (2024) 
-"U-Net Kalman Filter (UNetKF): An Example of Machine Learning-assisted 
-Ensemble Data Assimilation" for the Lorenz 96 model.
-
-KEY DIFFERENCES FROM THE PAPER (QG MODEL):
-1. Model: L96 (1D, 40 variables) vs QG (2D, 32x32 or 128x128 grid)
-2. Covariances: Using FULL B matrices (40x40) vs LOCALIZED patches (16x16)
-3. Architecture: 1D convolutions vs 2D convolutions
-4. Normalization: Using std (as in paper) not range
-
-IMPORTANT CONSIDERATIONS:
-- Paper uses LOCALIZED covariance matrices to reduce storage/computation
-  We use FULL matrices for L96 since it's smaller (40x40 vs 32x32x2 layers)
-- Paper normalizes by standard deviation (we do this)
-- Paper uses ~200 epochs and tracks validation loss for early stopping
-- Paper finds optimal model at epoch with MINIMUM validation loss
-- Paper uses relaxation factors in training EnKF (0.45-0.6)
-- Paper uses NO inflation for single-member UNetKF
-
-TO MAKE THIS MORE LIKE THE PAPER:
-- Could implement localized B matrices (e.g., 8x8 patches around each point)
-- Would need to modify data preprocessing and UNet architecture
-- Localization helps with larger models and reduces overfitting
 """
 
 import os
@@ -49,71 +26,107 @@ BASE_DIR = './data/lorenz96'
 #-----------------------#
 # EXPERIMENT DEFINITIONS
 #-----------------------#
-
-# Experiment with 20 ensemble members
 DA_exp_L20 = {
     'N_truth': 40,
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EnKF',
-    'obs_freq': 2,          # Observe every 4 time steps
-    'obs_err': 1.0,         # Observation error std
+    'obs_freq': 5,          # Observe every n time steps
+    'obs_err': 1.73,        # Observation error std
+    'obs_type': 'regular',
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
-    'DA_freq': 4,           # DA cycle frequency
+    'DA_freq': 5,           # DA cycle frequency
     'save_B': True,         # Save B matrices for training
     'use_localization': False,  # Use FULL B matrix (no localization)
     'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
     'F': 8.0,               # Lorenz 96 forcing
-    'dt': 0.01}             # Time step
+    'dt': 0.015625}             # Time step
 
-DA_exp_L20_w16 = {
+DA_exp_L80 = {
     'N_truth': 40,
     'N_DA': 40,
-    'nens': 20,
+    'nens': 80,
     'DA_method': 'EnKF',
-    'obs_freq': 2,          # Observe every 4 time steps
-    'obs_err': 1.0,         # Observation error std
-    'nobs': 20,             # Number of observations per cycle
+    'obs_freq': 5,          # Observe every n time steps
+    'obs_err': 1.73,         # Observation error std
+    'obs_type': 'regular',
+    'nobs': 10,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
-    'DA_freq': 4,           # DA cycle frequency
+    'DA_freq': 5,           # DA cycle frequency
     'save_B': True,         # Save B matrices for training
     'use_localization': False,  # Use FULL B matrix (no localization)
     'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
     'F': 8.0,               # Lorenz 96 forcing
-    'dt': 0.01}             # Time step
+    'dt': 0.015625}             # Time step
 
-DA_exp_L20_w4 = {
+DA_exp_L80_ran_1 = {
     'N_truth': 40,
     'N_DA': 40,
-    'nens': 20,
+    'nens': 80,
     'DA_method': 'EnKF',
-    'obs_freq': 2,          # Observe every 4 time steps
-    'obs_err': 1.0,         # Observation error std
-    'nobs': 20,             # Number of observations per cycle
+    'obs_freq': 5,          # Observe every n time steps
+    'obs_err': 1.73,         # Observation error std
+    'obs_type': 'randome_once',
+    'nobs': 10,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
-    'DA_freq': 4,           # DA cycle frequency
+    'DA_freq': 5,           # DA cycle frequency
     'save_B': True,         # Save B matrices for training
     'use_localization': False,  # Use FULL B matrix (no localization)
     'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
     'F': 8.0,               # Lorenz 96 forcing
-    'dt': 0.01}             # Time step
+    'dt': 0.015625}             # Time step
+
+DA_exp_L80_ran_every = {
+    'N_truth': 40,
+    'N_DA': 40,
+    'nens': 80,
+    'DA_method': 'EnKF',
+    'obs_freq': 5,          # Observe every n time steps
+    'obs_err': 1.73,         # Observation error std
+    'obs_type': 'random_every',
+    'nobs': 10,             # Number of observations per cycle
+    'loc_radius': 5.0,      # Localization radius
+    'DA_freq': 5,           # DA cycle frequency
+    'save_B': True,         # Save B matrices for training
+    'use_localization': False,  # Use FULL B matrix (no localization)
+    'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
+    'F': 8.0,               # Lorenz 96 forcing
+    'dt': 0.015625}             # Time step
 
 DA_exp_L20_EAKF = {
     'N_truth': 40,
     'N_DA': 40,
     'nens': 20,
     'DA_method': 'EAKF',
-    'obs_freq': 2,          # Observe every 4 time steps
-    'obs_err': 1.0,         # Observation error std
+    'obs_freq': 5,          # Observe every n time steps
+    'obs_err': 1.73,         # Observation error std
+    'obs_type': 'regular',
     'nobs': 20,             # Number of observations per cycle
     'loc_radius': 5.0,      # Localization radius
-    'DA_freq': 4,           # DA cycle frequency
+    'DA_freq': 5,           # DA cycle frequency
     'save_B': True,         # Save B matrices for training
     'use_localization': False,  # Use FULL B matrix (no localization)
     'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
     'F': 8.0,               # Lorenz 96 forcing
-    'dt': 0.01}             # Time step
+    'dt': 0.015625}             # Time step
+
+DA_exp_L80_EAKF = {
+    'N_truth': 40,
+    'N_DA': 40,
+    'nens': 80,
+    'DA_method': 'EAKF',
+    'obs_freq': 5,          # Observe every n time steps
+    'obs_err': 1.73,         # Observation error std
+    'nobs': 20,             # Number of observations per cycle
+    'obs_type': 'regular',
+    'loc_radius': 5.0,      # Localization radius
+    'DA_freq': 5,           # DA cycle frequency
+    'save_B': True,         # Save B matrices for training
+    'use_localization': False,  # Use FULL B matrix (no localization)
+    'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
+    'F': 8.0,               # Lorenz 96 forcing
+    'dt': 0.015625}             # Time step
 
 DA_exp_L20_ETKF = {
     'N_truth': 40,
@@ -123,6 +136,7 @@ DA_exp_L20_ETKF = {
     'obs_freq': 2,          # Observe every 4 time steps
     'obs_err': 1.0,         # Observation error std
     'nobs': 20,             # Number of observations per cycle
+    'obs_type': 'regular',
     'loc_radius': 5.0,      # Localization radius
     'DA_freq': 4,           # DA cycle frequency
     'save_B': True,         # Save B matrices for training
@@ -131,16 +145,54 @@ DA_exp_L20_ETKF = {
     'F': 8.0,               # Lorenz 96 forcing
     'dt': 0.01}             # Time step
 
-# Select experiments to run
-# experiments = [DA_exp_L20,DA_exp_L20_w16,DA_exp_L20_w4]
-# STEPS_TRAIN = [1000,1000, 1000]  # Number of time steps for training
-# exp_name = ['L20','L20_w16', 'L20_w4']
-# widths = [40,16, 4]
+DA_exp_L80_ETKF = {
+    'N_truth': 40,
+    'N_DA': 40,
+    'nens': 80,
+    'DA_method': 'EAKF',
+    'obs_freq': 5,          # Observe every n time steps
+    'obs_err': 1.73,         # Observation error std
+    'obs_type': 'regular',
+    'nobs': 20,             # Number of observations per cycle
+    'loc_radius': 5.0,      # Localization radius
+    'DA_freq': 5,           # DA cycle frequency
+    'save_B': True,         # Save B matrices for training
+    'use_localization': False,  # Use FULL B matrix (no localization)
+    'inflate': [1.05, 0.0],  # [prior_inflation, relaxation]
+    'F': 8.0,               # Lorenz 96 forcing
+    'dt': 0.015625}             # Time step
 
-experiments = [DA_exp_L20, DA_exp_L20_w16, DA_exp_L20_w4, DA_exp_L20_EAKF,DA_exp_L20_ETKF]
-STEPS_TRAIN = [100000, 100000, 100000, 100000, 100000]
-exp_name = ['L20','L20_w16','L20_w4','L20_EAKF','L20_ETKF']
-widths = [40,16,4,4,4]
+###replication of UNet paper for ens 20 and 80 with three diff Kalman filters
+# experiments = [DA_exp_L20 ,DA_exp_L20_EAKF, DA_exp_L20_ETKF, DA_exp_L80 ,DA_exp_L80_EAKF, DA_exp_L80_ETKF]
+# STEPS_TRAIN = [100000, 100000, 100000, 100000, 100000, 100000, 100000]
+# exp_name = ['L20', 'L20_EAKF', 'L20_ETKF', 'L80', 'L80_EAKF', 'L80_ETKF']
+# widths = [4,4,4,4,4,4]
+# learning_rate = [0.002, 0.002, 0.002]
+# dropout = [0,0,0]
+
+###testing learning rate (EnKF)
+experiments = [DA_exp_L80, DA_exp_L80, DA_exp_L80]
+# exp_name = ['L80_lr002', 'L80_lr001', 'L80_lr0003']
+# STEPS_TRAIN = [10000,10000,10000]
+# widths = [4,4,4]
+# learning_rate = [0.002, 0.001, 0.0003]
+# dropout = [0,0,0]
+
+###testing dropout rate (EnKF)
+# experiments = [DA_exp_L80, DA_exp_L80, DA_exp_L80]
+# exp_names = ['L80_lr002', 'L80_lr001', 'L80_lr0003']
+# STEPS_TRAIN = [10000,10000,10000]
+# wdiths = [4,4,4]
+# learning_rate = [0.002, 0.002, 0.002]
+# dropout = [0.3,0.2,0.1]
+
+###testing observation options (regular spaced, random selection once, random sleection each time step)
+experiments = [DA_exp_L80, DA_exp_L80_ran_1, DA_exp_L80_ran_every]
+exp_name = ['L80_reg_N10', 'L80_ran_1_N10', 'L80_ran_every_N10']
+STEPS_TRAIN = [10000,10000,10000]
+widths = [4,4,4]
+learning_rate = [0.002, 0.002, 0.002]
+dropout = [0,0,0]
 
 if __name__ == '__main__':
 
@@ -174,9 +226,14 @@ if __name__ == '__main__':
             
             # Spin up ensemble
             DA_train.ens_spinup(steps=10000, save_netcdf=True)
+
             
             # Run EnKF experiment with save_B=True to collect B matrices
             DA_train.run_exp(DA_steps=STEPS_TRAIN[i], DA_start=0, ic_seed=0)
+
+            # lambda1_calc, xs = DA_train.estimate_lyapunov(steps=10000)
+            # print(f'lambda: {lambda1_calc}')
+            # # print(xs)
         else:
             print()
             print('>>>>Phase 1: SKIPPING (Data already exists)')
@@ -241,9 +298,9 @@ if __name__ == '__main__':
         # B_unet = B_data[:, newaxis, :, :]
         B_unet = B_data.astype(np.float32)
         
-        print(f"x_unet shape: {x_unet.shape}")
-        print(f"B_unet shape: {B_unet.shape}")
-        print(f"B_ens mean: {np.mean(np.abs(B_ens))}")
+        # print(f"x_unet shape: {x_unet.shape}")
+        # print(f"B_unet shape: {B_unet.shape}")
+        # print(f"B_ens mean: {np.mean(np.abs(B_ens))}")
         print(f"B_data mean: {np.mean(np.abs(B_data))}")
         print(f"x_data mean: {np.mean(np.abs(x_norm))}")
         print(f"B_data Max: {np.max(B_data)}")
@@ -263,7 +320,7 @@ if __name__ == '__main__':
             U-Net for predicting full B matrix from L96 state
             Simplified 1D version of the paper's 2D U-Net
             """
-            def __init__(self, channels_in=1, channels_out=2, width=16):
+            def __init__(self, channels_in=1, channels_out=2, width=16, dropout = 0.0):
                 super(L96_UNet, self).__init__()
                 self.N = N
                 
@@ -279,22 +336,36 @@ if __name__ == '__main__':
 
                 # Decoder (Expanding Path)
                 self.up2 = nn.ConvTranspose1d(width*4, width*2, kernel_size=2, stride=2)
-                self.dec2 = self.conv_block(width*4, width*2)
+                self.dec2 = self.conv_block(width*4, width*2, dropout = dropout)
                 self.up1 = nn.ConvTranspose1d(width*2, width, kernel_size=2, stride=2)
-                self.dec1 = self.conv_block(width*2, width)
+                self.dec1 = self.conv_block(width*2, width, dropout = dropout)
 
                 # Final 1x1 Conv to match output channels
                 # self.final = nn.Conv1d(width, width, kernel_size=1)
                 self.final = nn.Linear(width*N, N*N)
 
-            def conv_block(self, in_ch, out_ch):
+            def conv_block(self, in_ch, out_ch, dropout = 0.0):
+                if dropout > 0:
+                    layers = [
+                    nn.Conv1d(in_ch, out_ch, kernel_size=3, padding=1),
+                    nn.ReLU(inplace=True)
+                    ]
 
-            	return nn.Sequential(
-            		nn.Conv1d(in_ch, out_ch, kernel_size=3, padding=1),
-            		nn.ReLU(inplace=True),
-            		nn.Conv1d(out_ch, out_ch, kernel_size=3, padding=1),
-            		nn.ReLU(inplace=True)
-            		)
+                    layers.append(nn.Dropout1d(p=dropout))
+
+                    layers.extend([
+                        nn.Conv1d(out_ch, out_ch, kernel_size=3, padding=1),
+                        nn.ReLU(inplace=True)
+                        ])
+
+                    return nn.Sequential(*layers)
+                else:
+                    return nn.Sequential(
+                    nn.Conv1d(in_ch, out_ch, kernel_size=3, padding=1),
+                    nn.ReLU(inplace=True),
+                    nn.Conv1d(out_ch, out_ch, kernel_size=3, padding=1),
+                    nn.ReLU(inplace=True)
+                    )
                 
             def forward(self, x):
 
@@ -303,7 +374,7 @@ if __name__ == '__main__':
                 p1 = self.pool1(e1)
 
                 e2 = self.enc2(p1)
-                p2 = self.pool1(e2)
+                p2 = self.pool2(e2)
 
                 # Bottleneck
                 b = self.bottleneck(p2)
@@ -332,7 +403,7 @@ if __name__ == '__main__':
                 return B_pred
 
 
-        model = L96_UNet(width = widths[i])
+        model = L96_UNet(width = widths[i], dropout = dropout[i])
         model = model.to(DEVICE)
         model = model.float()
         
@@ -362,7 +433,7 @@ if __name__ == '__main__':
             
             # Paper uses MSE loss and Adam optimizer with lr=0.002
             criterion = torch.nn.MSELoss()
-            optimizer = optim.Adam(model.parameters(), lr=0.002)
+            optimizer = optim.Adam(model.parameters(), lr=learning_rate[i])
             
             train_losses = []
             valid_losses = []

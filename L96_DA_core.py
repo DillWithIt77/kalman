@@ -81,6 +81,7 @@ class L96_DA_exp:
         self.nobs = kwargs.get('nobs', 20)
         self.obs_freq = kwargs.get('obs_freq', 4)
         self.obs_err = kwargs.get('obs_err', 1.0)
+        self.obs_type = kwargs.get('obs_type', 'regular')
         self.DA_method = kwargs.get('DA_method', 'NoDA')
         self.nens = kwargs.get('nens', 1)
         self.DA_freq = kwargs.get('DA_freq', 4)
@@ -136,7 +137,7 @@ class L96_DA_exp:
         
         return x_init_da
     
-    def generate_truth(self, steps, save_every=10):
+    def generate_truth(self, steps, save_every=1):
         """Generate truth trajectory"""
         ic_file = f'{self.read_dir}/IC_x_N{self.N_truth}_ens1.nc'
         
@@ -191,10 +192,17 @@ class L96_DA_exp:
         obs_err_std = np.ones((n_time, self.nobs)) * self.obs_err
         
         # Generate random observations with errors
+        ran_idx_once = rng.choice(self.N_truth, size=self.nobs, replace=False)
         for t in range(n_time):
-            # Randomly sample observation locations (changes with time as in paper)
-            idx = rng.choice(self.N_truth, size=self.nobs, replace=False)
-            obs_idx[t, :] = idx
+            if self.obs_type == 'random_once':
+                obs_idx[t, :] = ran_idx_once
+            elif self.obs_type == 'random_every':
+                idx = rng.choice(self.N_truth, size=self.nobs, replace=False)
+                obs_idx[t, :] = idx
+            else:
+                P = int(self.N_truth/self.nobs)
+                idx = np.arange(0, self.N_truth, P)
+                obs_idx[t, :] = idx
             
             # Add observation errors
             obs_x[t, :] = x_truth.values[t, idx] + rng.standard_normal(self.nobs) * self.obs_err
@@ -291,6 +299,15 @@ class L96_DA_exp:
         H, R_obs = self.create_obs_operator(obs_cycle_idx)
         obs_x = self.obs_ds.x[obs_cycle_idx].values
         
+
+        # # --- ADD THIS DIAGNOSTIC ---
+        # prior_mean = prior.mean(axis=0)
+        # innovation = obs_x - (H @ prior_mean)
+        # print(f"\nCycle {obs_cycle_idx} Diagnostic:")
+        # print(f"  Obs Time: {self.obs_ds.time[obs_cycle_idx].values}")
+        # print(f"  RMSE Innovation: {np.sqrt(np.mean(innovation**2)):.4f}")
+        # # ---------------------------
+
         if self.DA_method in ['EnKF','EAKF', 'ETKF']:
             # Ensemble Kalman Filter
             if self.inflate[0] > 1.0001:
@@ -406,7 +423,21 @@ class L96_DA_exp:
         
         Following the paper: saves both forecast (prior) and analysis (posterior)
         """
-        self.init_DA(DA_start, ic_seed=ic_seed)       
+        self.init_DA(DA_start, ic_seed=ic_seed)   
+
+        # # --- ADD THIS DEBUG BLOCK HERE ---
+        # print(">>>> DEBUG: Forcing ensemble to Truth for diagnostic test...")
+        # # We use self.truth_ds because init_DA likely loads it into the object
+        # # If it's not there, we load it manually
+        # if not hasattr(self, 'truth_ds'):
+        #     import xarray as xr
+        #     file_name = f'{self.save_dir}/Truth_N{self.N_truth}_2000steps.nc' # Adjust name if needed
+        #     self.truth_ds = xr.open_dataset(file_name)
+
+        # truth_init = self.truth_ds.x.isel(time=0).values
+        # for model in self.ens.models:
+        #     model.x = truth_init + (np.random.standard_normal(self.N_DA) * 0.1)
+
         # Setup kwargs for UnetKF if needed
         DA_kwargs = {}
         if self.DA_method == 'UnetKF':
@@ -545,6 +576,43 @@ class L96_DA_exp:
         
         plt.show()
 
+    def estimate_lyapunov(self, steps=5000, perturbation=1e-8):
+        # This correctly pulls F=8.0, dt=0.015625, and N=40 from your config
+        m1 = Lorenz96Model(N=self.N_truth, F=self.F, dt=self.dt)
+        m2 = Lorenz96Model(N=self.N_truth, F=self.F, dt=self.dt)
+
+        m1.x = self.F + np.random.randn(self.N_truth) * 0.1
+
+        # 1. Spin up m1 to reach the chaotic attractor
+        for _ in range(10000): 
+            m1.step_forward()
+
+        if np.allclose(m1.x, self.F):
+                print("Warning: System is still flat. Check your step_forward logic!")
+
+        # 2. Place m2 exactly next to m1
+        m2.x = m1.x + perturbation
+
+        lyap_sum = 0.0
+        m1_xs = []
+
+        for _ in range(steps):
+            m1.step_forward()
+            m2.step_forward()
+
+            # 3. Measure Euclidean distance between the two
+            m1_xs.append(m1.x)
+            dist = np.linalg.norm(m1.x - m2.x)
+
+            # 4. Accumulate log-growth
+            lyap_sum += np.log(dist / perturbation)
+
+            # 5. Rescale m2 back to 'perturbation' distance from m1
+            # This keeps the error from getting so big that the math breaks
+            m2.x = m1.x + perturbation * (m2.x - m1.x) / dist
+
+        # Normalize by total model time (steps * dt)
+        return lyap_sum / (steps * self.dt), m1_xs
 class L96Ensemble:
     """Ensemble of Lorenz 96 models"""
     
@@ -659,22 +727,31 @@ def calculate_cov(data):
     """Calculate covariance matrix"""
     return np.cov(data.T)
 
-@jit(nopython=True)
 def EnKF(prior, obs, H, R, B):
-    """Ensemble Kalman Filter update"""
+    """Ensemble Kalman Filter update (Stochastic version)"""
     nens, N = prior.shape
     nobs = obs.shape[0]
     
-    # Kalman gain
     D = H @ B @ H.T + R
-    K = B @ H.T @ np.linalg.inv(D)
+    B_HT = B @ H.T
+    K = np.linalg.solve(D.T, B_HT.T).T 
+
+    R_diag = np.diag(R)
+    obs_noise_std = np.sqrt(R_diag)
     
-    # Perturb observations
-    obs_ens = obs.repeat(nens).reshape(nobs, nens) + \
-              np.sqrt(R) @ np.random.standard_normal((nobs, nens))
+    # Generate perturbations: (nobs, nens)
+    noise = np.random.standard_normal((nobs, nens))
+    for j in range(nobs):
+        noise[j, :] *= obs_noise_std[j]
     
-    # Analysis
-    posterior = prior.T + K @ (obs_ens - H @ prior.T)
+    # Reshape obs to (nobs, nens) then add noise
+    obs_ens = np.zeros((nobs, nens))
+    for i in range(nens):
+        obs_ens[:, i] = obs
+    obs_ens += noise
+    
+    innovation = obs_ens - (H @ prior.T)
+    posterior = prior.T + (K @ innovation)
     
     return posterior.T
 
@@ -700,84 +777,86 @@ def EAKF(prior, obs, H, R, B = None):
     nens, N = prior.shape
     nobs = obs.shape[0]
 
+    # Calculate Prior Mean and Anomalies
     Xf_mean = np.zeros(N)
-
     for i in range(nens):
-        Xf_mean += prior[i,:]
+        Xf_mean += prior[i, :]
     Xf_mean /= nens
+    Xf_a = prior - Xf_mean 
 
-    Xf = prior - Xf_mean #might inflate here if didn't have a sperate inflation funtion that is applied prior to calling the fileter functions
-
-    Yf = Xf@H.T
+    # Project ensemble into observation space
+    Yf = Xf_a @ H.T
+    # Calculate Y mean (should be 0 because Xf_a is centered)
     Yf_mean = np.zeros(nobs)
     for i in range(nens):
-        for j in range(nobs):
-            Yf_mean[j] += Yf[i, j]
+        Yf_mean += Yf[i, :]
     Yf_mean /= nens
-    Yf_ano = Yf-Yf_mean
-
-    Xf_mean_a = Xf_mean.copy()
-    Xf_a = Xf.copy()
 
     for j in range(nobs):
-        y_f = Yf[:,j]
-        y_f_mean = Yf_mean[j]
-        y_f_ano = y_f-y_f_mean
-
-        y_f_ano = np.zeros(nens)
-        var_y_f = 0.0
-        for i in range(nens):
-            y_f_ano[i] = y_f[i] - y_f_mean
-            var_y_f += y_f_ano[i]**2
-        var_y_f /= (nens - 1.0)
+        # 1. Get current ensemble in obs space for this specific observation
+        # We re-calculate this each time because Xf_a changes
+        y_f_ano = Xf_a @ H[j, :]
+        
+        var_y_f = np.sum(y_f_ano**2) / (nens - 1.0)
 
         if var_y_f < 1e-12:
             continue
 
-        Rj = R[j,j]
-        cov_xy = (Xf_a.T@y_f_ano)/(nens-1)
-        K_gain = cov_xy/(var_y_f+Rj)
-        innovation = obs[j]- y_f_mean
-        Xf_mean_a += K_gain*innovation
-        alpha = np.sqrt(1- var_y_f/(var_y_f+Rj))
+        Rj = R[j, j]
+        
+        # 2. Kalman Gain for the Mean
+        cov_xy = (Xf_a.T @ y_f_ano) / (nens - 1.0)
+        K_gain = cov_xy / (var_y_f + Rj)
+        
+        # 3. Update the Mean (using the innovation)
+        # Note: the observation mean in obs-space is (H @ Xf_mean)
+        innovation = obs[j] - (H[j, :] @ Xf_mean)
+        Xf_mean += K_gain * innovation
+        
+        # 4. Update the Anomalies (Spread)
+        # Standard EAKF scaling factor
+        alpha = np.sqrt(Rj / (var_y_f + Rj))
+        
+        # This is the Potter square-root update
+        # It adjusts the anomalies so the posterior variance is correct
+        Xf_a = Xf_a - (1.0 - alpha) * np.outer(y_f_ano, cov_xy) / var_y_f
 
-        Xf_a = Xf_a = (1-alpha)*np.outer(y_f_ano,K_gain)/var_y_f
-        for k in range(N):
-            col_sum = 0.0
-            for i in range(nens):
-                col_sum += Xf_a[i, k]
-            col_mean = col_sum / nens
-            for i in range(nens):
-                Xf_a[i, k] -= col_mean
-
-    posterior = Xf_mean_a + Xf_a
-
+    # Final posterior is updated mean + updated anomalies
+    posterior = Xf_mean + Xf_a
     return posterior
 @jit(nopython=True)
 def ETKF(prior, obs, H, R, B = None):
     nens, N = prior.shape
+    nobs = obs.shape[0]
 
     Xf_mean = np.zeros(N)
     for i in range(nens):
-        for k in range(N):
-            Xf_mean[k] += prior[i, k]
+        Xf_mean += prior[i, :]
     Xf_mean /= nens
+    Xf = prior - Xf_mean  # Shape: (nens, N)
+
+    Yf = Xf @ H.T        # Shape: (nens, nobs)
+    Yf_mean = H @ Xf_mean # Shape: (nobs,)
+
+    tmp = np.linalg.solve(R, Yf.T).T 
+    C = (Yf @ tmp.T) / (nens - 1.0) # Shape: (nens, nens)
+
+    I_n = np.eye(nens)
+    eigenvals, eigenvecs = np.linalg.eigh(I_n + C)
     
-    Xf = prior - Xf_mean
-    Yf = Xf@H.T
-    Yf_mean = H@Xf_mean
-
-    R_inv = np.linalg.inv(R)
-    C = (Yf@R_inv@Yf.T)/(nens-1)
-
-    eigenvals,eigenvecs = np.linalg.eigh(np.eye(nens)+C)
-    T = eigenvecs@np.diag(1/np.sqrt(eigenvals))@eigenvecs.T
+    T = eigenvecs @ np.diag(1.0 / np.sqrt(eigenvals)) @ eigenvecs.T
+    
     innovation = obs - Yf_mean
-    W = np.linalg.solve(np.eye(nens)+C, Yf@R_inv@innovation)/(nens-1)
-    Xa_mean = Xf_mean+Xf.T@W
-    Xa = T@Xf
+    # W = (I + C)^-1 @ (Yf @ R_inv @ innovation) / (nens-1)
+    rhs = (tmp @ innovation) / (nens - 1.0)
+    W = np.linalg.solve(I_n + C, rhs) # Shape: (nens,)
 
-    posterior = Xa_mean + Xa
+    Xa_mean = Xf_mean + (Xf.T @ W)   # New Mean: (N,)
+    Xa = T @ Xf                      # New Anomalies: (nens, N)
+
+    posterior = np.zeros((nens, N))
+    for i in range(nens):
+        posterior[i, :] = Xa_mean + Xa[i, :]
 
     return posterior
 
