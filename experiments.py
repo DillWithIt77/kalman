@@ -21,8 +21,8 @@ L96_BASE = {
     'F': 8.0,
     'dt': 0.015625,
     'model_id': 'L96',
-    'steps_train': 25000,
-    'steps_truth': 100000,
+    'steps_train': 400000,
+    'steps_truth': 1200000,
     'steps_spin_up': 10000,
 }
 
@@ -121,7 +121,7 @@ GROUPS = {
         DA_exp_L80_ran_every,DA_exp_L80_ran_every_M10,DA_exp_L80_ran_every_M5],
         widths        = [4] * 18,
         learning_rate = [0.002] * 18,
-        dropout       = [0] * 18,
+        dropout       = [0.1] * 18,
     ),
 
     # Learning-rate sweep (EnKF, ens 80)

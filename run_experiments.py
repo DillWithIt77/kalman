@@ -16,7 +16,7 @@ logging.getLogger().setLevel(logging.WARNING)
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 # ← Change this one line to switch experiment groups
-ACTIVE_GROUP = 'all_forces_EnKF'
+ACTIVE_GROUP = 'all_exps_strd'
 
 group         = GROUPS[ACTIVE_GROUP]
 experiments   = group['experiments']
